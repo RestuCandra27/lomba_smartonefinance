@@ -2,57 +2,148 @@
 <html lang="id">
 
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SmartOne Finance</title>
-  <link rel="stylesheet" href="styles.css">
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    /* Minimal helper styles untuk popup notifikasi modal (bisa pindah ke styles.css) */
+    dialog#quizModal {
+      padding: 18px;
+      border-radius: 12px;
+      max-width: 520px;
+    }
+
+    #modalNotif {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      display: none;
+      font-weight: 600;
+    }
+
+    #modalNotif.show {
+      display: block;
+    }
+
+    /* Notif fallback di bawah papan */
+    #notifPopup {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-medium, #1f2041);
+      color: var(--text-light, #f0f0f0);
+      padding: 10px 16px;
+      border-radius: 10px;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+      display: none;
+      z-index: 9999;
+    }
+
+    #notifPopup.show {
+      display: block;
+    }
+
+    /* pion: pastikan di atas tile */
+    .pion {
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      z-index: 20;
+      border: 2px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+      pointer-events: none;
+    }
+  </style>
 </head>
 
 <body>
   <div id="screen-landing" class="screen active">
-    <h1>SmartOne Finance</h1>
-    <p>Game Edukasi: Bermain Sambil belajar</p> <button id="gassMulaiBtn">GASS MULAI</button>
+    <div class="landing-container">
+      <h1>SmartOne Finance</h1>
+      <p>Game Edukasi: Bermain Sambil belajar</p>
+      <button id="gassMulaiBtn">GASS MULAI</button>
+    </div>
   </div>
+
   <div id="screen-setup" class="screen">
-    <h2>Pilih Kategori:</h2> <select id="categorySel"></select>
-    <h2>Pilih Jumlah Pemain:</h2> <select id="playerCount">
-      <option value="2" selected>2 Pemain</option>
-      <option value="3">3 Pemain</option>
-      <option value="4">4 Pemain</option>
-    </select> <button id="startBtn" disabled>Memuat Data...</button>
+    <div class="setup-container">
+      <h2>Pilih Kategori:</h2>
+      <div id="category-card-group" class="card-group"></div>
+
+      <h2>Pilih Jumlah Pemain:</h2>
+      <div id="player-count-group" class="btn-group">
+        <button class="btn-choice selected" data-value="2">2 Pemain</button>
+        <button class="btn-choice" data-value="3">3 Pemain</button>
+        <button class="btn-choice" data-value="4">4 Pemain</button>
+      </div>
+
+      <button id="startBtn" disabled>Memuat Data...</button>
+    </div>
   </div>
+
   <div id="screen-game" class="screen">
     <div id="player1-info" class="player-info-box"></div>
     <div id="player2-info" class="player-info-box"></div>
     <div id="player3-info" class="player-info-box"></div>
     <div id="player4-info" class="player-info-box"></div>
+
     <div class="center-area">
       <h1>SmartOne Finance</h1>
       <div id="turnInfo">Menunggu pemain...</div>
+
       <div id="board-wrapper">
-        <div id="board" class="board"> </div>
-        <div id="pion1" class="pion"></div>
-        <div id="pion2" class="pion"></div>
-        <div id="pion3" class="pion"></div>
-        <div id="pion4" class="pion"></div>
+        <div id="board" class="board"></div>
+
+        <!-- pion absolute -->
+        <div id="pion1" class="pion" aria-hidden="true"></div>
+        <div id="pion2" class="pion" aria-hidden="true"></div>
+        <div id="pion3" class="pion" aria-hidden="true"></div>
+        <div id="pion4" class="pion" aria-hidden="true"></div>
+
+        <!-- dadu overlay -->
         <div id="diceOverlay">
-          <div id="dice">1</div>
+          <div id="dice" role="button" tabindex="0" aria-label="Dadu">1</div>
         </div>
       </div>
+
       <div id="game-controls">
-        <div id="diceValue" aria-live="polite">Lempar dadu untuk mulai!</div> <button id="rollBtn" disabled>🎲 Lempar
-          Dadu</button>
+        <div id="diceValue" aria-live="polite">Lempar dadu untuk mulai!</div>
+        <button id="rollBtn" disabled>🎲 Lempar Dadu</button>
       </div>
     </div>
   </div>
+
+  <!-- Quiz Modal -->
   <dialog id="quizModal">
-    <p id="quizQuestion"></p>
-    <div id="quizChoices"></div> <button id="quizSubmit">Jawab</button>
+    <p id="quizQuestion" style="font-weight:700;"></p>
+    <div id="quizChoices"></div>
+    <!-- TEMPAT POPUP NOTIFICATION -->
+    <div id="modalNotif" class="modalNotif"></div>
+    <div class="quiz-footer">
+      <button id="quizSubmit">Jawab</button>
+    </div>
   </dialog>
+
+  <!-- Edu popup kecil (saat landing di tile) -->
   <div id="eduPopup" class="edu-popup"></div>
+
+  <!-- fallback notification (bawah layar) -->
+  <div id="notifPopup" aria-live="polite"></div>
+
   <script src="game.js"></script>
-  <script> const screenLanding = document.getElementById("screen-landing"); const screenSetup = document.getElementById("screen-setup"); const gassMulaiBtn = document.getElementById("gassMulaiBtn"); gassMulaiBtn.addEventListener("click", () => { screenLanding.classList.remove("active"); screenSetup.classList.add("active"); }); </script>
+  <script>
+    const screenLanding = document.getElementById("screen-landing");
+    const screenSetup = document.getElementById("screen-setup");
+    const gassMulaiBtn = document.getElementById("gassMulaiBtn");
+    gassMulaiBtn.addEventListener("click", () => {
+      screenLanding.classList.remove("active");
+      screenSetup.classList.add("active");
+    });
+  </script>
 </body>
 
 </html>

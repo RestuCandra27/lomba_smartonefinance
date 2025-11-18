@@ -1,7 +1,6 @@
 /* ======================================================
    game.js - SmartOne Finance (final: absolute pions)
-   - Menyusun ulang token system: pindah dari inside-tile -> absolute overlay
-   - Mempertahankan semua logika game sebelumnya
+   - Perbaikan: quiz modal, notifikasi di modal, klik dadu, safety listeners
 ====================================================== */
 
 const diceEl = document.getElementById("dice");
@@ -13,36 +12,35 @@ const rollBtn = document.getElementById("rollBtn");
 const diceValueEl = document.getElementById("diceValue");
 const turnInfoEl = document.getElementById("turnInfo");
 const startBtn = document.getElementById("startBtn");
-const playerCountSel = document.getElementById("playerCount");
-const categorySel = document.getElementById("categorySel");
+const playerCountGroup = document.getElementById("player-count-group");
+const playerChoices = playerCountGroup.querySelectorAll(".btn-choice");
+
 const quizModal = document.getElementById("quizModal");
 const quizQuestion = document.getElementById("quizQuestion");
 const quizChoices = document.getElementById("quizChoices");
 const quizSubmit = document.getElementById("quizSubmit");
+const modalNotif = document.getElementById("modalNotif"); // <<< tempat menampilkan hasil di modal
 
 // --- MODIFIKASI 1: Ambil Elemen Baru ---
-// Panel Info Pemain (4 Sudut)
 const playerInfoBoxes = [
   document.getElementById("player1-info"),
   document.getElementById("player2-info"),
   document.getElementById("player3-info"),
   document.getElementById("player4-info")
 ];
-// Dadu (di tengah)
 const diceOverlayEl = document.getElementById("diceOverlay");
-// Pion absolute (harus ada di HTML)
 const pionEls = [
   document.getElementById("pion1"),
   document.getElementById("pion2"),
   document.getElementById("pion3"),
   document.getElementById("pion4"),
 ];
-// wrapper
 const boardWrapper = document.getElementById("board-wrapper");
+const notifPopup = document.getElementById("notifPopup"); // <<< fallback notifikasi di bawah layar
 // --- Akhir Modifikasi 1 ---
 
 
-// --- Board shape: 6x6 outer ring (20 tiles) ---
+/* ---------------- board shape & path (tidak diubah) ---------------- */
 const gridSize = 6;
 const path = [];
 for (let c = 0; c < gridSize; c++) path.push([0, c]);
@@ -50,7 +48,6 @@ for (let r = 1; r < gridSize; r++) path.push([r, gridSize - 1]);
 for (let c = gridSize - 2; c >= 0; c--) path.push([gridSize - 1, c]);
 for (let r = gridSize - 2; r >= 1; r--) path.push([r, 0]);
 
-// Jenis tile
 const T = {
   START: "start",
   INCOME: "income",
@@ -61,74 +58,71 @@ const T = {
   PENALTY: "penalty",
 };
 
-// --- Variabel Global untuk Data ---
+/* ---------------- state global ---------------- */
 let allGameData = null;
 let currentTiles = [];
-let currentQuizBank = [];        // fallback (legacy)
-let currentQuizLevels = null;    // ⭐ UPDATE: akan menampung quizLevels jika tersedia
+let currentQuizBank = [];        // fallback legacy
+let currentQuizLevels = null;    // new: quizLevels
 let currentEduText = {};
 
-// Pemain
 const tokenColors = ["#22d3ee", "#fbbf24", "#ef4444", "#22c55e"];
 let players = [];
+let selectedPlayerCount = 2;
+let selectedCategoryKey = null;
 let turn = 0;
 let started = false;
 
-// --- ⭐ UPDATE: Konfigurasi Level & Bonus ---
-const LEVEL_THRESHOLDS = { // minimal poin untuk naik ke level selanjutnya
-  2: 130000, // level 1 -> 2
-  3: 300000  // level 2 -> 3
-};
-const BONUS_BY_LEVEL = {  // bonus jawaban benar per level (disepakati)
-  1: 15000,
-  2: 8000,
-  3: 5000
-};
-// --- akhir update ---
+const LEVEL_THRESHOLDS = { 2: 130000, 3: 300000 };
+const BONUS_BY_LEVEL = { 1: 15000, 2: 8000, 3: 5000 };
 
-// --- FUNGSI BARU: Load Data Game dari JSON ---
+/* ---------------- load data ---------------- */
 async function loadGameData() {
   try {
     const response = await fetch("data_game.json");
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
     allGameData = await response.json();
     populateCategorySelect();
-
     startBtn.disabled = false;
-    startBtn.textContent = "YOK Mulai"; // <-- Ganti teks tombol
-
+    startBtn.textContent = "Yok Mulai";
   } catch (err) {
     console.error("Gagal memuat data_game.json:", err);
     turnInfoEl.textContent = "Error: Gagal memuat data. Coba refresh halaman.";
   }
 }
 
-// --- FUNGSI BARU: Mengisi Dropdown Kategori ---
+/* ---------------- populate kategori (card group) ---------------- */
 function populateCategorySelect() {
   if (!allGameData) return;
-  categorySel.innerHTML = "";
-  const categories = Object.keys(allGameData.kategori);
-  categories.forEach(key => {
-    const option = document.createElement("option");
-    option.value = key;
-    option.textContent = allGameData.kategori[key].nama;
-    categorySel.appendChild(option);
+  const categoryGroup = document.getElementById("category-card-group");
+  categoryGroup.innerHTML = "";
+  const categories = Object.keys(allGameData.kategori || {});
+  categories.forEach((key, index) => {
+    const card = document.createElement("div");
+    card.className = "card-choice";
+    card.textContent = allGameData.kategori[key].nama || key;
+    card.dataset.key = key;
+    if (index === 0) {
+      card.classList.add("selected");
+      selectedCategoryKey = key;
+    }
+    card.addEventListener("click", () => {
+      categoryGroup.querySelectorAll(".card-choice").forEach(c => c.classList.remove("selected"));
+      card.classList.add("selected");
+      selectedCategoryKey = card.dataset.key;
+    });
+    categoryGroup.appendChild(card);
   });
 }
 
-// --- MODIFIKASI 3: Render papan ---
+/* ---------------- render board ---------------- */
 function renderBoard() {
   boardEl.innerHTML = "";
-  // Sembunyikan dadu di tengah papan dulu
   diceOverlayEl.style.display = 'none';
-
   const cells = new Map();
   for (let r = 0; r < gridSize; r++) {
     for (let c = 0; c < gridSize; c++) {
       const cell = document.createElement("div");
-      cell.className = "tile void"; // <-- Petak tengah akan disembunyikan CSS
+      cell.className = "tile void";
       cell.dataset.pos = `${r}-${c}`;
       boardEl.appendChild(cell);
       cells.set(`${r}-${c}`, cell);
@@ -138,28 +132,18 @@ function renderBoard() {
     const [r, c] = coord;
     const cell = cells.get(`${r}-${c}`);
     const t = currentTiles[i % currentTiles.length] || { title: "?", effect: "", type: "income" };
-
-    cell.className = `tile ${t.type}`; // <-- CSS akan otomatis nampilin ini
+    cell.className = `tile ${t.type}`;
     cell.innerHTML = `
       <div class="title">${t.title}</div>
       <div class="effect">${t.effect || ""}</div>
       <div class="tokens" data-idx="${i}"></div>`;
   });
 
-  // Force reposition pions (jika sudah ada pemain)
-  setTimeout(() => {
-    placeAllPions();
-  }, 0);
-
-  // Tampilkan dadu setelah papan jadi
+  setTimeout(placeAllPions, 0);
   diceOverlayEl.style.display = 'flex';
 }
-// --- Akhir Modifikasi 3 ---
 
-
-// =====================
-// Player management
-// =====================
+/* ---------------- player management ---------------- */
 function createPlayers(n = 2) {
   players = Array.from({ length: n }).map((_, i) => ({
     id: i,
@@ -169,254 +153,232 @@ function createPlayers(n = 2) {
     points: 50000,
     savingsPoints: 0,
     laps: 0,
-    // ⭐ UPDATE: level awal dan used questions per level
     level: 1,
     usedQuestions: { 1: new Set(), 2: new Set(), 3: new Set() }
   }));
   updatePlayersPanel();
-  placeAllPions(); // place initial pions
+  placeAllPions();
 }
 
-// --- MODIFIKASI 2: Ganti Total updatePlayersPanel ---
 function updatePlayersPanel() {
-  // Sembunyikan semua panel info dulu
   playerInfoBoxes.forEach(box => box.style.display = 'none');
-
-  // Tampilkan panel sesuai jumlah pemain
   players.forEach((p, index) => {
     const box = playerInfoBoxes[index];
-    if (!box) return; // Jaga-jaga
-
-    box.style.display = 'block'; // Tampilkan panel
+    if (!box) return;
+    box.style.display = 'block';
     box.innerHTML = `
       <strong>${p.name}</strong><br>
-      Level: ${p.level} <br> 
+      Level: ${p.level} <br>
       Skor: ${fmt(p.points)}<br>
       Tabungan: ${fmt(p.savingsPoints)}<br>
       Putaran: ${p.laps}`;
-
-    // Set warna border sesuai token
     box.style.borderColor = p.color;
   });
 }
-// --- Akhir Modifikasi 2 ---
 
-
-function currentPlayer() {
-  return players[turn % players.length];
-}
-function nextTurn() {
-  turn = (turn + 1) % players.length;
-  setTurnInfo();
-}
+function currentPlayer() { return players[turn % players.length]; }
+function nextTurn() { turn = (turn + 1) % players.length; setTurnInfo(); }
 function setTurnInfo() {
   const p = currentPlayer();
-  turnInfoEl.textContent = `Giliran: ${p.name} — Skor ${fmt(
-    p.points
-  )} | Tabungan ${fmt(p.savingsPoints)}`;
+  turnInfoEl.textContent = `Giliran: ${p.name} — Skor ${fmt(p.points)} | Tabungan ${fmt(p.savingsPoints)}`;
 }
 
-
-// =====================
-// PION ABSOLUTE: posisi & helper
-// =====================
-
-// Dapatkan elemen tile by r,c
+/* ---------------- pion absolute helpers ---------------- */
 function tileElementAt(r, c) {
   return boardEl.querySelector(`.tile[data-pos="${r}-${c}"]`);
 }
 
-// Update satu pion berdasarkan player.pos
 function updatePionPosition(player) {
   const pion = pionEls[player.id];
   if (!pion || !boardEl) return;
-
-  // gunakan path untuk menemukan r,c
   const idx = player.pos % path.length;
   const [r, c] = path[idx];
-
   const tile = tileElementAt(r, c);
   if (!tile) {
-    // kalau tile tidak ada (edge-case), letakkan di 0,0
     pion.style.left = `0px`;
     pion.style.top = `0px`;
     return;
   }
-
   const boardRect = boardEl.getBoundingClientRect();
   const tileRect = tile.getBoundingClientRect();
-
-  // pos relative to board
   const left = tileRect.left - boardRect.left + tileRect.width / 2 - (pion.offsetWidth || 18) / 2;
   const top = tileRect.top - boardRect.top + tileRect.height / 2 - (pion.offsetHeight || 18) / 2;
-
   pion.style.left = `${Math.round(left)}px`;
   pion.style.top = `${Math.round(top)}px`;
 }
 
-// Pindahkan semua pion
+playerChoices.forEach(button => {
+  button.addEventListener("click", () => {
+    playerChoices.forEach(btn => btn.classList.remove("selected"));
+    button.classList.add("selected");
+    selectedPlayerCount = Number(button.dataset.value);
+  });
+});
+
 function placeAllPions() {
-  // only for active players
   players.forEach((p) => {
-    // set pion color (safety)
     const el = pionEls[p.id];
-    if (el) {
-      el.style.background = p.color;
-      el.style.display = 'block';
-    }
+    if (el) { el.style.background = p.color; el.style.display = 'block'; }
     updatePionPosition(p);
   });
-
-  // hide unused pion elements
   for (let i = players.length; i < pionEls.length; i++) {
     const el = pionEls[i];
     if (el) el.style.display = 'none';
   }
 }
 
-// reposition pions on resize (so they stay in correct place)
 window.addEventListener("resize", () => {
-  // slight debounce
   if (typeof window._pionResizeTimeout !== "undefined") clearTimeout(window._pionResizeTimeout);
-  window._pionResizeTimeout = setTimeout(() => {
-    placeAllPions();
-  }, 120);
+  window._pionResizeTimeout = setTimeout(() => placeAllPions(), 120);
 });
 
-// =====================
-// Flow / Movement
-// =====================
+/* ---------------- gameplay / movement ---------------- */
+function rollDice() { return Math.floor(Math.random() * 6) + 1; }
+function applyStartBonus(player) { player.points += 10000; showInModalOrNotif(`${player.name} melewati START: +10.000 Poin`); }
 
-function rollDice() {
-  return Math.floor(Math.random() * 6) + 1;
-}
-function applyStartBonus(player) {
-  player.points += 10000;
-  toast(`${player.name} melewati START: +10.000 Poin`);
-}
-
-// --- resolveTile (MODIFIKASI) ---
 function resolveTile(player) {
   const tile = currentTiles[player.pos % currentTiles.length];
   showEdu(tile.type);
-
   switch (tile.type) {
     case T.INCOME:
       player.points += tile.points;
-      toast(`${player.name}: ${tile.title} ${toPoinStr(tile.points)}`);
+      showInModalOrNotif(`${player.name}: ${tile.title} ${toPoinStr(tile.points)}`);
       break;
     case T.EXPENSE:
       player.points += tile.points;
-      toast(`${player.name}: ${tile.title} ${toPoinStr(tile.points)}`);
+      showInModalOrNotif(`${player.name}: ${tile.title} ${toPoinStr(tile.points)}`);
       break;
     case T.TAX: {
       const cut = Math.floor(player.points * (tile.percent / 100));
       player.points -= cut;
-      toast(`${player.name}: Bayar ${tile.title} ${toPoinStr(-cut)}`);
+      showInModalOrNotif(`${player.name}: Bayar ${tile.title} ${toPoinStr(-cut)}`);
       break;
     }
     case T.SAVE:
       if (player.points >= tile.points) {
         player.points -= tile.points;
         player.savingsPoints += tile.points;
-        toast(`${player.name}: Menabung ${toPoinStr(tile.points)}`);
+        showInModalOrNotif(`${player.name}: Menabung ${toPoinStr(tile.points)}`);
       } else {
-        toast(`${player.name}: Poin kurang untuk menabung.`);
+        showInModalOrNotif(`${player.name}: Poin kurang untuk menabung.`);
       }
       break;
     case T.BONUS:
-      toast(`${player.name}: ${tile.title}!`);
+      showInModalOrNotif(`${player.name}: ${tile.title}!`);
       handleQuiz(player);
       break;
     case T.PENALTY:
       player.points += tile.points;
-      toast(`${player.name}: Denda ${tile.title} ${toPoinStr(tile.points)}`);
+      showInModalOrNotif(`${player.name}: Denda ${tile.title} ${toPoinStr(tile.points)}`);
       break;
     case T.START:
-      toast(`${player.name} di START.`);
+      showInModalOrNotif(`${player.name} di START.`);
   }
   updatePlayerLevel(player);
   updatePlayersPanel();
 }
 
-function fmt(n) {
-  return n.toLocaleString("id-ID");
-}
-function toPoinStr(n) {
-  return (n < 0 ? "-" : "+") + " " + Math.abs(n).toLocaleString("id-ID") + " Poin";
-}
-function toast(msg) {
-  diceValueEl.textContent = msg;
-  diceValueEl.classList.remove("money-pop-anim", "money-gain", "money-loss");
-  if (msg.includes("+")) {
-    diceValueEl.classList.add("money-gain");
-  } else if (msg.includes("-")) {
-    diceValueEl.classList.add("money-loss");
-  }
-  void diceValueEl.offsetWidth;
-  diceValueEl.classList.add("money-pop-anim");
-  setTimeout(() => {
-    diceValueEl.classList.remove("money-gain", "money-loss");
-  }, 800);
+function fmt(n) { return n.toLocaleString("id-ID"); }
+function toPoinStr(n) { return (n < 0 ? "-" : "+") + " " + Math.abs(n).toLocaleString("id-ID") + " Poin"; }
+
+/* ---------------- notifications ---------------- */
+/* showNotif: bottom fallback (existing) */
+function showNotif(msg, time = 1800) {
+  notifPopup.textContent = msg;
+  notifPopup.classList.add("show");
+  clearTimeout(notifPopup._t);
+  notifPopup._t = setTimeout(() => notifPopup.classList.remove("show"), time);
 }
 
-// --- showEdu (MODIFIKASI) ---
+/* showInModalOrNotif:
+   - if quizModal is open, show message inside modalNotif (ke atas)
+   - otherwise fallback to bottom notification */
+function showInModalOrNotif(msg, time = 1600) {
+  if (quizModal.open) {
+    modalNotif.textContent = msg;
+    modalNotif.classList.add("show");
+
+    clearTimeout(modalNotif._t);
+    modalNotif._t = setTimeout(() => {
+      modalNotif.classList.remove("show");
+    }, time);
+
+  } else {
+    showNotif(msg);
+  }
+}
+
+
+/* ---------------- education popup ---------------- */
 function showEdu(type) {
   const popup = document.getElementById("eduPopup");
   const msg = currentEduText[type];
   if (!msg) return;
   popup.textContent = msg;
   popup.classList.add("show");
-  setTimeout(() => {
-    popup.classList.remove("show");
-  }, 4500);
+  setTimeout(() => popup.classList.remove("show"), 4200);
 }
 
-function highlightLanding(index) {
-  const tile = boardEl
-    .querySelector(`.tokens[data-idx="${index}"]`)
-    ?.closest(".tile");
-  if (!tile) return;
-  tile.classList.add("highlight");
-  setTimeout(() => tile.classList.remove("highlight"), 1200);
-}
-
-// --- askQuiz (MODIFIKASI) ---
-function askQuiz(bank) {
+/* ---------------- quiz system (FIXED) ---------------- */
+/*
+ askQuiz(bank)
+  - Menampilkan modal, membangun opsi
+  - Menampilkan hasil (benar/salah) DI DALAM MODAL sebelum menutup
+  - Mengembalikan { answer, correct, item }
+*/
+function askQuiz(bank, playerLevel = 1) {
   return new Promise((resolve) => {
     const item = bank[Math.floor(Math.random() * bank.length)];
-
     if (!item) {
-      toast("Tidak ada kuis tersedia.");
-      return resolve(null);
+      showInModalOrNotif("Tidak ada kuis tersedia.");
+      return resolve({ answer: null, correct: false, item: null });
     }
 
+    // reset notif modal
+    modalNotif.classList.remove("show");
+    modalNotif.textContent = "";
+
+    // Set soal
     quizQuestion.textContent = item.q;
     quizChoices.innerHTML = "";
-    let answer = null;
 
     item.choices.forEach((c, idx) => {
-      const label = document.createElement("label");
-      label.innerHTML = `<input type="radio" name="q" value="${idx}"> <span>${c}</span>`;
-      quizChoices.appendChild(label);
+      const wrapper = document.createElement("label");
+      wrapper.className = "quiz-option";
+      wrapper.innerHTML = `
+        <input type="radio" name="quizOpt" value="${idx}">
+        <span>${c}</span>
+      `;
+      quizChoices.appendChild(wrapper);
     });
 
-    // listener tidak pakai once=true
-    quizChoices.onclick = () => {
-      const r = quizChoices.querySelector('input[name="q"]:checked');
-      answer = r ? Number(r.value) : null;
+    // handler submit
+    quizSubmit.onclick = async (ev) => {
+      ev.preventDefault();
+      const selected = quizChoices.querySelector("input[name='quizOpt']:checked");
+      const answer = selected ? Number(selected.value) : null;
+      const correct = (answer === item.correct);
+
+      // tampilkan notif di dalam modal
+      modalNotif.textContent = correct ? "Jawaban benar!" : "Jawaban salah.";
+      modalNotif.classList.add("show");
+
+      // beri waktu pemain melihat notif sebelum modal ditutup
+      await new Promise(r => setTimeout(r, 1100));
+
+      try { quizModal.close(); } catch (e) {}
+      modalNotif.classList.remove("show");
+
+      resolve({ answer, correct, item });
     };
 
-    quizSubmit.onclick = () => {
-      quizModal.close();
-      resolve(answer);
-    };
-
-    quizModal.showModal();
+    // tampilkan modal
+    try { quizModal.showModal(); } catch (e) {}
   });
 }
 
 
+/* ---------------- roll & move animations ---------------- */
 function rollDiceAnimated() {
   return new Promise((resolve) => {
     playDiceSound();
@@ -429,79 +391,83 @@ function rollDiceAnimated() {
     }, 450);
   });
 }
-function movePlayerAnimated(player, steps) {
-  return new Promise(async (resolve) => {
-    const ringLen = path.length;
-    for (let i = 0; i < steps; i++) {
-      const oldPos = player.pos;
-      player.pos = (player.pos + 1) % ringLen;
-      if (player.pos === 0 && oldPos !== 0) {
-        player.laps++;
-        applyStartBonus(player);
-        updatePlayersPanel();
-      }
 
-      // Pindahkan pion absolute ke posisi baru
-      updatePionPosition(player);
-
-      // beri jeda supaya animasi terpanggil
-      await new Promise((r) => setTimeout(r, 220));
+async function movePlayerAnimated(player, steps) {
+  const ringLen = path.length;
+  for (let i = 0; i < steps; i++) {
+    const oldPos = player.pos;
+    player.pos = (player.pos + 1) % ringLen;
+    if (player.pos === 0 && oldPos !== 0) {
+      player.laps++;
+      applyStartBonus(player);
+      updatePlayersPanel();
     }
-    highlightLanding(player.pos);
-    resolveTile(player);
-    updatePlayersPanel();
-    resolve();
-  });
+    updatePionPosition(player);
+    await new Promise((r) => setTimeout(r, 220));
+  }
+  highlightLanding(player.pos);
+  resolveTile(player);
+  updatePlayersPanel();
 }
 
-// --- handleQuiz (MODIFIKASI) ---
+/* ---------------- handleQuiz: menggunakan askQuiz yang baru ---------------- */
 async function handleQuiz(player) {
-  const level = player.level || 1; // default level 1
-  const bank = currentQuizLevels[level];
+  const level = player.level || 1;
+
+  // --- Ambil bank soal sesuai level ---
+  let bank = null;
+  if (currentQuizLevels && currentQuizLevels[level] && currentQuizLevels[level].length > 0) {
+    bank = currentQuizLevels[level];
+  } else if (currentQuizBank && currentQuizBank.length > 0) {
+    bank = currentQuizBank;
+  }
 
   if (!bank || bank.length === 0) {
-    toast("Tidak ada soal untuk level ini.");
+    showInModalOrNotif("Tidak ada soal untuk level ini.");
     return;
   }
 
-  const ans = await askQuiz(bank);
+  // --- PANGGIL SYSTEM QUIZ BARU ---
+  const result = await askQuiz(bank, level);
 
-  if (ans === null) {
-    toast(`${player.name}: Tidak menjawab. Tidak ada bonus.`);
+  // Jika user tidak memilih jawaban
+  if (!result || result.answer === null) {
+    showNotif(`${player.name}: Tidak menjawab. Tidak ada bonus.`);
     return;
   }
 
-  const item = bank.find(q => q.q === quizQuestion.textContent);
+  const { correct } = result;
 
-  if (!item) {
-    toast("Soal tidak ditemukan.");
-    return;
-  }
-
-  if (ans === item.correct) {
-    // bonus berdasarkan level
-    const bonus = level === 1 ? 15000 : level === 2 ? 8000 : 5000;
+  // --- JAWABAN BENAR ---
+  if (correct) {
+    const bonus = BONUS_BY_LEVEL[level] || BONUS_BY_LEVEL[1];
     player.points += bonus;
-    toast(`${player.name}: Jawaban benar! +${bonus.toLocaleString("id-ID")} Poin`);
-  } else {
-    toast(`${player.name}: Jawaban salah.`);
+
+    // tampilkan notifikasi setelah modal tutup
+    showNotif(`${player.name}: Jawaban benar! +${bonus.toLocaleString("id-ID")} Poin`);
+  }
+
+  // --- JAWABAN SALAH ---
+  else {
+    showNotif(`${player.name}: Jawaban salah.`);
   }
 
   updatePlayersPanel();
+  updatePlayerLevel(player);
 }
-// --- ⭐ UPDATE: fungsi untuk mengupdate level pemain berdasarkan poin ---
-function updatePlayerLevel(player) {
-  const oldLevel = player.level;
-  if (player.points >= LEVEL_THRESHOLDS[3]) player.level = 3;
-  else if (player.points >= LEVEL_THRESHOLDS[2]) player.level = 2;
-  else player.level = 1;
 
-  if (player.level !== oldLevel) {
-    toast(`${player.name} naik ke LEVEL ${player.level}!`);
-  }
+
+
+
+/* ---------------- highlight landing ---------------- */
+function highlightLanding(index) {
+  const tile = boardEl.querySelector(`.tokens[data-idx="${index}"]`)?.closest(".tile");
+  if (!tile) return;
+  tile.classList.add("highlight");
+  setTimeout(() => tile.classList.remove("highlight"), 1200);
 }
-// --- akhir update ---
 
+/* ---------------- audio ---------------- */
 function playDiceSound() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -513,22 +479,14 @@ function playDiceSound() {
     o.connect(g).connect(ctx.destination);
     o.start();
     o.stop(ctx.currentTime + 0.3);
-  } catch (e) {
-    // beberapa browser mungkin blok audio auto
-    // ignore
-  }
+  } catch (e) { /* ignore */ }
 }
 
-function scrollToBoard() {
-  if (window.innerWidth > 768) return;
-  boardEl.scrollIntoView({ behavior: "smooth", block: "center" });
-}
+/* ---------------- scrolling helpers ---------------- */
+function scrollToBoard() { if (window.innerWidth > 768) return; boardEl.scrollIntoView({ behavior: "smooth", block: "center" }); }
+function scrollToTurnPanel() { if (window.innerWidth > 768) return; turnInfoEl.scrollIntoView({ behavior: "smooth", block: "center" }); }
 
-function scrollToTurnPanel() {
-  if (window.innerWidth > 768) return;
-  turnInfoEl.scrollIntoView({ behavior: "smooth", block: "center" });
-}
-
+/* ---------------- events: roll button & dice click ---------------- */
 rollBtn.addEventListener("click", async () => {
   if (!started) return;
   rollBtn.disabled = true;
@@ -542,41 +500,56 @@ rollBtn.addEventListener("click", async () => {
   rollBtn.disabled = false;
 });
 
-// --- MODIFIKASI 4: Ganti startBtn listener ---
-startBtn.addEventListener("click", () => {
-  // 1. Ambil nilai dari SEMUA pilihan setup
-  const n = Math.max(2, Math.min(4, Number(playerCountSel.value || 2)));
-  const categoryKey = categorySel.value;
+// <<< new: klik pada dadu juga melempar (sama logic dg tombol) >>>
+diceEl.addEventListener("click", async () => {
+  if (!started) return;
+  // disable untuk mencegah double click
+  rollBtn.disabled = true;
+  diceEl.setAttribute("aria-disabled", "true");
+  const p = currentPlayer();
+  scrollToBoard();
+  const d = await rollDiceAnimated();
+  diceValueEl.textContent = `${p.name} melempar dadu: ${d}`;
+  await movePlayerAnimated(p, d);
+  nextTurn();
+  setTimeout(scrollToTurnPanel, 1000);
+  rollBtn.disabled = false;
+  diceEl.removeAttribute("aria-disabled");
+});
 
-  // 2. Set data global berdasarkan kategori yg dipilih
-  const selectedCategory = allGameData.kategori[categoryKey];
+/* ---------------- start button (setup -> game) ---------------- */
+startBtn.addEventListener("click", () => {
+  const n = selectedPlayerCount;
+  const categoryKey = selectedCategoryKey;
+  const selectedCategory = allGameData.kategori[categoryKey] || {};
   currentTiles = selectedCategory.tiles || [];
-  // ⭐ UPDATE: if JSON memiliki quizLevels, pakai itu; jika tidak fallback ke quizBank
-  currentQuizLevels = selectedCategory.quizLevels || null; // { "1": [...], "2": [...], "3": [...] }
-  currentQuizBank = selectedCategory.quizBank || []; // legacy fallback
+  currentQuizLevels = selectedCategory.quizLevels || null;
+  currentQuizBank = selectedCategory.quizBank || [];
   currentEduText = selectedCategory.eduText || {};
 
-  // 3. Render papan berdasarkan data yg dipilih
   renderBoard();
-
-  // 4. Buat pemain dan mulai game
   createPlayers(n);
   turn = 0;
   started = true;
   setTurnInfo();
   rollBtn.disabled = false;
 
-  // 5. Pindah dari layar setup ke layar game
   const screenSetup = document.getElementById("screen-setup");
   const screenGame = document.getElementById("screen-game");
   screenSetup.classList.remove("active");
   screenGame.classList.add("active");
 
-  // pastikan pion berada di tempat benar setelah transisi
   setTimeout(placeAllPions, 150);
 });
-// --- Akhir Modifikasi 4 ---
 
+/* ---------------- level update ---------------- */
+function updatePlayerLevel(player) {
+  const oldLevel = player.level;
+  if (player.points >= LEVEL_THRESHOLDS[3]) player.level = 3;
+  else if (player.points >= LEVEL_THRESHOLDS[2]) player.level = 2;
+  else player.level = 1;
+  if (player.level !== oldLevel) showInModalOrNotif(`${player.name} naik ke LEVEL ${player.level}!`, 1800);
+}
 
-// --- INIT (MODIFIKASI) ---
+/* ---------------- init ---------------- */
 loadGameData();
